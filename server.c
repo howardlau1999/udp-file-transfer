@@ -19,7 +19,7 @@ uint64_t time_now() {
     return current.tv_sec * 1000000 + current.tv_usec;
 }
 
-int64_t timeOut, estimatedRTT = 500000, deviation = 1, difference = 0,
+int64_t timeOut, estimatedRTT = 250000, deviation = 1, difference = 0,
                  minRTT = 250000;
 void update_timeout(uint64_t sentTime) {
     uint64_t sampleRTT = time_now() - sentTime;
@@ -27,7 +27,7 @@ void update_timeout(uint64_t sentTime) {
     deviation +=
         (0.25 * (abs(sampleRTT - estimatedRTT) - deviation));  // delta = 0.25
     timeOut = (estimatedRTT + 4 * deviation);  // mu = 1, phi = 4
-    timeOut = timeOut/5;
+    
     if (timeOut < minRTT) timeOut = minRTT;
 }
 
@@ -40,7 +40,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     char outwnd[MAX_WINDOW + 1][BUFFER_LEN];
     int outlen[MAX_WINDOW + 1];
     struct pkthdr outhdr[MAX_WINDOW + 1];
-    int cwnd = 32, ssthresh = 65535;
+    int cwnd = 1, ssthresh = 65535;
     int seq = 0, n, rseq = syn;
     int sendbase = 0;
     struct iovec iovsend[2], iovrecv[2];
@@ -86,7 +86,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     // Connected, transfer data
     FILE *fp = fopen(path, "r");
     int finished = 0;
-
+    int ack_cnt = 10;
     while (1) {
     sendnext:
         for (; seq - sendbase < cwnd && !finished; ++seq) {
@@ -116,6 +116,22 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 print_hdr(0, outhdr[seq - sendbase]);
             }
         }
+
+        if (sigsetjmp(jmpbuf, 1) != 0) {
+	    printf("Timeout\n");
+	    if (++rxmt > 3) goto finish;
+	    // if (cwnd > 1) cwnd--;
+            for (int i = 0; i < cwnd && i < seq - sendbase; ++i) {
+                iovsend[1].iov_len = outlen[i];
+                iovsend[1].iov_base = outwnd[i];
+                iovsend[0].iov_base = &outhdr[i];
+		outhdr[i].ts = time_now();
+                sendmsg(server_fd, &msgsend, 0);
+                print_hdr(0, outhdr[i]);
+            }
+	    
+	    goto waitack;
+        }
     waitack:;
         struct itimerval timer;
         struct timeval rto;
@@ -127,12 +143,13 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
             n = recvmsg(server_fd, &msgrecv, 0);
             printf("Sendbase: %d\n", sendbase);
             print_hdr(1, hdrrecv);
+	    update_timeout(hdrrecv.ts);
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
+		// if (cwnd < MAX_WINDOW - 1) ++cwnd;
 		rxmt = 0;
-                update_timeout(hdrrecv.ts);
+                if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
                 int acked = hdrrecv.ack - sendbase;
-                printf("Acked: %d\n", acked);
                 sendbase = hdrrecv.ack;
                 for (int i = 0; i < seq - sendbase; ++i) {
                     memmove(outwnd[i], outwnd[i + acked], BUFFER_LEN);
@@ -140,25 +157,13 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 memmove(outlen, outlen + acked, sizeof(int) * (seq - sendbase));
                 memmove(outhdr, outhdr + acked,
                         sizeof(struct pkthdr) * (seq - sendbase));
-		if (cwnd < MAX_WINDOW - 1) ++cwnd;
+		
                 goto sendnext;
             }
             if (hdrrecv.fin) goto finish;
-        } while (0);
+        } while (1);
 
-        if (sigsetjmp(jmpbuf, 1) != 0) {
-	    if (++rxmt > 3) goto finish;
-            for (int i = sendbase; i < seq; ++i) {
-                iovsend[1].iov_len = outlen[i - sendbase];
-                iovsend[1].iov_base = outwnd[i - sendbase];
-                iovsend[0].iov_base = &outhdr[i - sendbase];
-		outhdr[i - sendbase].ts = time_now();
-                sendmsg(server_fd, &msgsend, 0);
-                print_hdr(0, outhdr[i - sendbase]);
-            }
-	    if (cwnd > 1) --cwnd;
-            goto waitack;
-        }
+
     }
 
 finish:
