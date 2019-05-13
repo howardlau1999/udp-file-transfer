@@ -19,10 +19,10 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     signal(SIGALRM, sig_alarm);
 
     char inbuf[BUFFER_LEN], outbuf[BUFFER_LEN];
-    char outwnd[MAX_WINDOW][BUFFER_LEN];
-    int outlen[MAX_WINDOW];
-    struct pkthdr outhdr[MAX_WINDOW];
-    int cwnd = 64, ssthresh = 65535;
+    char outwnd[MAX_WINDOW + 1][BUFFER_LEN];
+    int outlen[MAX_WINDOW + 1];
+    struct pkthdr outhdr[MAX_WINDOW + 1];
+    int cwnd = 32, ssthresh = 65535;
     int seq = 0, n, rseq = syn;
     int sendbase = 0;
     struct iovec iovsend[2], iovrecv[2];
@@ -71,6 +71,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     while (1) {
     sendnext:
         for (; cwnd > 0 && !finished; --cwnd, ++seq) {
+	    printf("Base: %d, Seq: %d, Cwnd: %d\n", sendbase, seq, cwnd);
             n = fread(outwnd[seq - sendbase], 1, BUFFER_LEN, fp);
             if (!n) {
                 finished = 1;
@@ -103,14 +104,15 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
                 int acked = hdrrecv.ack - sendbase;
+		printf("Acked: %d\n", acked);
                 cwnd += hdrrecv.ack - sendbase;
                 sendbase = hdrrecv.ack; 
-                for (int i = 0; i < seq - acked - 1; ++i) {
+                for (int i = 0; i < seq - sendbase; ++i) {
                     memmove(outwnd[i], outwnd[i + acked], BUFFER_LEN);
                 }
-                memmove(outlen, outlen + acked, sizeof(int) * (seq - acked + 1));
+                memmove(outlen, outlen + acked, sizeof(int) * (seq - sendbase));
                 memmove(outhdr, outhdr + acked,
-                        sizeof(struct pkthdr) * (seq - acked + 1));
+                        sizeof(struct pkthdr) * (seq - sendbase));
                 goto sendnext;
             }
             if (hdrrecv.fin) goto finish;
