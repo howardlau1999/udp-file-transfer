@@ -100,9 +100,10 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
             n = recvmsg(server_fd, &msgrecv, 0);
             printf("Sendbase: %d\n", sendbase);
             print_hdr(1, hdrrecv);
-            if (hdrrecv.ack == sendbase + 1) {
+            if (hdrrecv.ack <= sendbase + 1) {
                 alarm(0);
-                ++sendbase, ++cwnd;
+                cwnd += hdrrecv.ack - sendbase + 1;
+                sendbase = hdrrecv.ack; 
                 for (int i = 0; i < seq - 1; ++i) {
                     memmove(outwnd[i], outwnd[i + 1], BUFFER_LEN);
                 }
