@@ -96,7 +96,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
             }
         }
         waitack:
-        alarm(2);
+        alarm(1);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
             printf("Sendbase: %d\n", sendbase);
