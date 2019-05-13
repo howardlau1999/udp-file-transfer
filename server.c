@@ -95,8 +95,12 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 print_hdr(0, outhdr[seq - sendbase]);
             }
         }
-        waitack:
-        alarm(1);
+        waitack:;
+        struct itimerval timer;
+        struct timeval rto;
+        rto.tv_usec = 5e5;
+        timer.it_value = rto;
+        setitimer(ITIMER_REAL, &timer, NULL);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
             printf("Sendbase: %d\n", sendbase);
