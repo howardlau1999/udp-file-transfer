@@ -114,6 +114,7 @@ int main(int argc, char *argv[]) {
         }
         hdrsend.ack = LAR;
         hdrsend.is_ack = 1;
+        hdrsend.ts = hdrrecv.ts;
         sendmsg(client_fd, &msgsend, 0);
         print_hdr(0, hdrsend);
         hdrsend.is_ack = 0;
