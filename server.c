@@ -13,6 +13,25 @@ void *get_in_addr(struct sockaddr *sa) {
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
+uint64_t time_now()
+{
+	struct timeval current;
+	gettimeofday(&current, 0);
+	return current.tv_sec * 1000000 + current.tv_usec;
+}
+
+int64_t timeOut, estimatedRTT = 10000, deviation = 1, difference = 0, minRTT = 10000;
+void update_timeout(uint64_t sentTime)
+{
+	uint64_t sampleRTT = time_now() - sentTime;
+	estimatedRTT = 0.875 * estimatedRTT + 0.125 * sampleRTT; // alpha = 0.875
+	deviation += (0.25 * ( abs(sampleRTT - estimatedRTT) - deviation)); //delta = 0.25
+	timeOut = (estimatedRTT + 4 * deviation); // mu = 1, phi = 4
+	// timeOut = timeOut/5;
+    if (timeOut < minRTT)
+        timeOut = minRTT;
+}
+
 static void sig_alarm(int signo) { siglongjmp(jmpbuf, 1); }
 
 void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
@@ -70,7 +89,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 
     while (1) {
     sendnext:
-        for (; cwnd > 0 && !finished; --cwnd, ++seq) {
+        for (; seq - sendbase < cwnd && !finished; ++seq) {
 	    printf("Base: %d, Seq: %d, Cwnd: %d\n", sendbase, seq, cwnd);
             n = fread(outwnd[seq - sendbase], 1, BUFFER_LEN, fp);
             if (!n) {
@@ -78,6 +97,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 hdrsend.fin = 1;
                 hdrsend.seq = seq;
                 hdrsend.ack = rseq;
+                hdrsend.ts = time_now();
                 outlen[seq - sendbase] = 0;
                 memcpy(&outhdr[seq - sendbase], &hdrsend,
                        sizeof(struct pkthdr));
@@ -88,6 +108,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 iovsend[1].iov_len = outlen[seq - sendbase] = n;
                 hdrsend.seq = seq;
                 hdrsend.ack = rseq;
+                hdrsend.ts = time_now();
                 outhdr[seq - sendbase] = hdrsend;
                 memcpy(&outhdr[seq - sendbase], &hdrsend,
                        sizeof(struct pkthdr));
@@ -98,7 +119,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         waitack:;
         struct itimerval timer;
         struct timeval rto;
-        rto.tv_usec = 5e5;
+        rto.tv_usec = timeOut;
         timer.it_value = rto;
         setitimer(ITIMER_REAL, &timer, NULL);
         do {
@@ -107,9 +128,9 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
             print_hdr(1, hdrrecv);
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
+                update_timeout(hdrrecv.ts);
                 int acked = hdrrecv.ack - sendbase;
-		printf("Acked: %d\n", acked);
-                cwnd += hdrrecv.ack - sendbase;
+		        printf("Acked: %d\n", acked);
                 sendbase = hdrrecv.ack; 
                 for (int i = 0; i < seq - sendbase; ++i) {
                     memmove(outwnd[i], outwnd[i + acked], BUFFER_LEN);
