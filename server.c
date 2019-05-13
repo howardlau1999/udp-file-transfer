@@ -40,7 +40,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     char outwnd[MAX_WINDOW + 1][BUFFER_LEN];
     int outlen[MAX_WINDOW + 1];
     struct pkthdr outhdr[MAX_WINDOW + 1];
-    int cwnd = 1, ssthresh = 65535;
+    int cwnd = 1, ssthresh = 2000;
     int seq = 0, n, rseq = syn;
     int sendbase = 0;
     struct iovec iovsend[2], iovrecv[2];
@@ -120,9 +120,12 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         if (sigsetjmp(jmpbuf, 1) != 0) {
 	    printf("Timeout\n");
 	    if (++rxmt > 3) goto finish;
+
 	    if (cwnd > 1) cwnd /= 2;
             // ack_cnt = cwnd * 10;
-            for (int i = 0; i < seq - sendbase; ++i) {
+            
+	        
+            for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
                 iovsend[0].iov_base = &outhdr[i];
@@ -130,6 +133,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
+            ssthresh = cwnd / 2, cwnd = 1;
 	    
 	    goto waitack;
         }
@@ -147,8 +151,17 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 	    update_timeout(hdrrecv.ts);
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
+<<<<<<< HEAD
 		if (cwnd < MAX_WINDOW - 1) ++cwnd;
 		rxmt = 0;
+=======
+		        if (cwnd < MAX_WINDOW - 1) {
+                    if (cwnd >= ssthresh) ++cwnd;
+                    else cwnd *= 2;
+                    if (cwnd >= MAX_WINDOW) cwnd = MAX_WINDOW - 1;
+                }
+		        rxmt = 0;
+>>>>>>> b66e1f7ccb3a79406a3a595faed1a0e95e19d478
                 // if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
                 int acked = hdrrecv.ack - sendbase;
                 sendbase = hdrrecv.ack;
