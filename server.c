@@ -1,8 +1,10 @@
+#include <setjmp.h>
 #include "libsha1.h"
 #include "uftp.h"
 int server_fd;
 unsigned int filelen;
 char *fn, *path;
+static sigjmp_buf jmpbuf;
 void *get_in_addr(struct sockaddr *sa) {
     if (sa->sa_family == AF_INET) {
         return &(((struct sockaddr_in *)sa)->sin_addr);
@@ -11,16 +13,18 @@ void *get_in_addr(struct sockaddr *sa) {
     return &(((struct sockaddr_in6 *)sa)->sin6_addr);
 }
 
-void *worker(void *args) {
-    struct threadarg arg = *(struct threadarg *)(args);
-    int syn = arg.syn;
-    struct sockaddr client_addr = arg.client_addr;
-    socklen_t addr_len = arg.addr_len;
-    free(args);
+static void sig_alarm(int signo) { siglongjmp(jmpbuf, 1); }
+
+void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
+    signal(SIGALRM, sig_alarm);
 
     char inbuf[BUFFER_LEN], outbuf[BUFFER_LEN];
-    int cwnd = 1, ssthresh = 65535;
-    int seq = 1, n;
+    char outwnd[MAX_WINDOW][BUFFER_LEN];
+    int outlen[MAX_WINDOW];
+    struct pkthdr outhdr[MAX_WINDOW];
+    int cwnd = 64, ssthresh = 65535;
+    int seq = 0, n, rseq = syn;
+    int sendbase = 0;
     struct iovec iovsend[2], iovrecv[2];
     // Try to connect
     struct pkthdr hdrsend = {0}, hdrrecv = {0};
@@ -47,51 +51,86 @@ void *worker(void *args) {
     iovrecv[1].iov_len = BUFFER_LEN;
 
     hdrsend.syn = 1;
+    hdrsend.is_ack = 1;
     hdrsend.seq = seq++;
-    hdrsend.ack = syn + 1;
+    hdrsend.ack = ++rseq;
     sendmsg(server_fd, &msgsend, 0);
-    printf("Send: Syn %d Ack %d\n", hdrsend.syn, hdrsend.ack);
+    print_hdr(0, hdrsend);
     hdrsend.syn = 0;
+    hdrsend.is_ack = 0;
 
     do {
         n = recvmsg(server_fd, &msgrecv, 0);
-        printf("Recv: Ack %d\n", hdrrecv.ack);
+        print_hdr(1, hdrrecv);
     } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
-
+    sendbase++;
     // Connected, transfer data
     FILE *fp = fopen(path, "r");
-    while (1) {
-        for (int i = 0; i < cwnd; ++i) {
-            n = fread(outbuf, 1, BUFFER_LEN, fp);
-            if (!n) goto finish;
-            iovsend[1].iov_len = n;
-            hdrsend.seq = seq++;
-            hdrsend.ack = hdrrecv.seq + 1;
-            sendmsg(server_fd, &msgsend, 0);
-            printf("Send: Seq %d Ack %d\n", hdrsend.seq, hdrsend.ack);
-        }
+    int finished = 0;
 
+    while (1) {
+    sendnext:
+        for (; cwnd > 0 && !finished; --cwnd, ++seq) {
+            n = fread(outwnd[seq - sendbase], 1, BUFFER_LEN, fp);
+            if (!n) {
+                finished = 1;
+                hdrsend.fin = 1;
+                hdrsend.seq = seq;
+                hdrsend.ack = rseq;
+                outlen[seq - sendbase] = 0;
+                memcpy(&outhdr[seq - sendbase], &hdrsend,
+                       sizeof(struct pkthdr));
+                sendmsg(server_fd, &msgsend, 0);
+                print_hdr(0, outhdr[seq - sendbase]);
+            } else {
+                iovsend[1].iov_base = outwnd[seq - sendbase];
+                iovsend[1].iov_len = outlen[seq - sendbase] = n;
+                hdrsend.seq = seq;
+                hdrsend.ack = rseq;
+                outhdr[seq - sendbase] = hdrsend;
+                memcpy(&outhdr[seq - sendbase], &hdrsend,
+                       sizeof(struct pkthdr));
+                sendmsg(server_fd, &msgsend, 0);
+                print_hdr(0, outhdr[seq - sendbase]);
+            }
+        }
+        waitack:
+        alarm(2);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
-            printf("Recv: Ack %d\n", hdrrecv.ack);
-        } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
+            printf("Sendbase: %d\n", sendbase);
+            print_hdr(1, hdrrecv);
+            if (hdrrecv.ack == sendbase + 1) {
+                alarm(0);
+                ++sendbase, ++cwnd;
+                for (int i = 0; i < seq - 1; ++i) {
+                    memmove(outwnd[i], outwnd[i + 1], BUFFER_LEN);
+                }
+                memmove(outlen, outlen + 1, sizeof(int) * (seq - sendbase));
+                memmove(outhdr, outhdr + 1,
+                        sizeof(struct pkthdr) * (seq - sendbase));
+                goto sendnext;
+            }
+            if (hdrrecv.fin) goto finish;
+        } while (0);
+
+        if (sigsetjmp(jmpbuf, 1) != 0) {
+            for (int i = sendbase; i < seq; ++i) {
+                iovsend[1].iov_len = outlen[i - sendbase];
+                iovsend[1].iov_base = outwnd[i - sendbase];
+                iovsend[0].iov_base = &outhdr[i - sendbase];
+                sendmsg(server_fd, &msgsend, 0);
+                print_hdr(0, outhdr[i - sendbase]);
+            }
+
+            goto waitack;
+        }
     }
 
 finish:
-    hdrsend.fin = 1;
-    hdrsend.seq = seq++;
-    hdrsend.ack = hdrrecv.seq + 1;
-    iovsend[1].iov_len = 0;
-    sendmsg(server_fd, &msgsend, 0);
-    printf("Send: Fin %d Ack %d\n", hdrsend.fin, hdrsend.ack);
-
-    do {
-        recvmsg(server_fd, &msgrecv, 0);
-        printf("Recv: Ack %d\n", hdrrecv.ack);
-    } while (hdrrecv.ack != seq);
 
     fclose(fp);
-
+    alarm(0);
     printf("File transfer finished.\n");
 }
 
@@ -201,14 +240,9 @@ int main(int argc, char *argv[]) {
         int n = recvmsg(server_fd, &msgrecv, 0);
 
         if (hdrrecv.syn) {
-            printf("New client: Syn %d\n", hdrrecv.syn);
-            struct threadarg *arg = malloc(sizeof(struct threadarg));
-            pthread_t tid;
-            arg->addr_len = msgrecv.msg_namelen;
-            arg->client_addr = *(struct sockaddr *)msgrecv.msg_name;
-            arg->syn = hdrrecv.syn;
-            pthread_create(&tid, NULL, worker, arg);
-            pthread_join(tid, NULL);
+            printf("New client\n");
+            print_hdr(1, hdrrecv);
+            worker(hdrrecv.seq, *(struct sockaddr*)&clients_addr, addr_size);
         }
     }
 }

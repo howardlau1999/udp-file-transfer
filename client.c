@@ -53,7 +53,7 @@ int main(int argc, char *argv[]) {
 
     char inbuf[BUFFER_LEN], outbuf[BUFFER_LEN];
     int cwnd = 1, ssthresh = 65535;
-    int seq = 1;
+    int seq = 0;
     struct iovec iovsend[2], iovrecv[2];
     // Try to connect
     struct pkthdr hdrsend = {0}, hdrrecv = {0};
@@ -82,39 +82,49 @@ int main(int argc, char *argv[]) {
     hdrsend.syn = 1;
     hdrsend.seq = seq++;
     sendmsg(client_fd, &msgsend, 0);
-    printf("Send: Syn %d\n", hdrsend.syn);
+    print_hdr(0, hdrsend);
     hdrsend.syn = 0;
 
     int n;
     do {
         n = recvmsg(client_fd, &msgrecv, 0);
-        printf("Recv: Syn %d Ack %d\n", hdrrecv.syn, hdrrecv.ack);
+        print_hdr(1, hdrrecv);
     } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
 
-    hdrsend.seq = seq++;
+    hdrsend.seq = seq;
+    hdrsend.is_ack = 1;
     hdrsend.ack = hdrrecv.seq + 1;
     sendmsg(client_fd, &msgsend, 0);
-    printf("Send: Ack %d\n", hdrsend.ack);
-
+    print_hdr(0, hdrsend);
+    hdrsend.is_ack = 0;
     // Connected, transfer data
 
     while (1) {
         do {
             n = recvmsg(client_fd, &msgrecv, 0);
-            printf("Recv: Seq %d Ack %d\n", hdrrecv.seq, hdrrecv.ack);
+            print_hdr(1, hdrrecv);
         } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
         if (hdrrecv.fin) break;
         fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
         hdrsend.ack = hdrrecv.seq + 1;
-        hdrsend.seq = seq++;
+        hdrsend.seq = seq;
+        hdrsend.is_ack = 1;
         sendmsg(client_fd, &msgsend, 0);
-        printf("Send: Seq %d Ack %d\n", hdrsend.seq, hdrsend.ack);
+        print_hdr(0, hdrsend);
+        hdrsend.is_ack = 0;
     }
 
+    hdrsend.is_ack = 1;
     hdrsend.ack = hdrrecv.seq + 1;
     hdrsend.seq = seq++;
     sendmsg(client_fd, &msgsend, 0);
-    printf("Send: Seq %d Ack %d\n", hdrsend.seq, hdrsend.ack);
+    print_hdr(0, hdrsend);
+
+    hdrsend.is_ack = 0;
+    hdrsend.fin = 1;
+    hdrsend.seq = seq++;
+    sendmsg(client_fd, &msgsend, 0);
+    print_hdr(0, hdrsend);
 
     fclose(fp);
 }
