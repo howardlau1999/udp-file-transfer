@@ -121,6 +121,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 	    printf("Timeout\n");
 	    if (++rxmt > 3) goto finish;
 	    // if (cwnd > 1) cwnd--;
+            ack_cnt = cwnd * 10;
             for (int i = 0; i < cwnd && i < seq - sendbase; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
