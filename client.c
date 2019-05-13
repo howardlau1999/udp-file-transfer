@@ -105,10 +105,11 @@ int main(int argc, char *argv[]) {
             print_hdr(1, hdrrecv);
         } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
         if (hdrrecv.fin) break;
-        if (hdrrecv.seq == hdrsend.ack)
+        if (hdrrecv.seq == hdrsend.ack) {
             fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
-        hdrsend.ack = hdrrecv.seq + 1;
-        hdrsend.seq = seq;
+            hdrsend.ack = hdrrecv.seq + 1;
+            hdrsend.seq = seq;
+        }
         hdrsend.is_ack = 1;
         sendmsg(client_fd, &msgsend, 0);
         print_hdr(0, hdrsend);
