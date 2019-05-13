@@ -104,16 +104,16 @@ int main(int argc, char *argv[]) {
             n = recvmsg(client_fd, &msgrecv, 0);
             print_hdr(1, hdrrecv);
         } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
-        
+
         if (hdrrecv.seq == LAR) {
             LAR = hdrrecv.seq + 1;
-            fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
             if (hdrrecv.fin) break;
+            fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
             hdrsend.seq = seq;
         } else {
             printf("Expected %d Actual %d\n", LAR, hdrrecv.seq);
         }
-        
+
         hdrsend.ack = LAR;
         hdrsend.is_ack = 1;
         hdrsend.ts = hdrrecv.ts;
