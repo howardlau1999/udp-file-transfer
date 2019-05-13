@@ -122,7 +122,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 	    printf("Timeout\n");
 	    if (++rxmt > 3) goto finish; 
 	        
-            for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
+            for (int i = 0; i < seq - sendbase; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
                 iovsend[0].iov_base = &outhdr[i];
@@ -130,7 +130,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
-            ssthresh = cwnd / 2, cwnd = cwnd > 1 ? cwnd / 2: 1;
+            ssthresh = cwnd - 1, cwnd = cwnd > 1 ? cwnd / 2: 1;
 	    
 	    goto waitack;
         }
