@@ -120,9 +120,9 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         if (sigsetjmp(jmpbuf, 1) != 0) {
 	    printf("Timeout\n");
 	    if (++rxmt > 3) goto finish;
-	    // if (cwnd > 1) cwnd--;
-            ack_cnt = cwnd * 10;
-            for (int i = 0; i < cwnd && i < seq - sendbase; ++i) {
+	    if (cwnd > 1) cwnd /= 2;
+            // ack_cnt = cwnd * 10;
+            for (int i = 0; i < seq - sendbase; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
                 iovsend[0].iov_base = &outhdr[i];
@@ -142,14 +142,14 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         setitimer(ITIMER_REAL, &timer, NULL);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
-            printf("Sendbase: %d\n", sendbase);
+            // printf("Sendbase: %d\n", sendbase);
             print_hdr(1, hdrrecv);
 	    update_timeout(hdrrecv.ts);
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
-		// if (cwnd < MAX_WINDOW - 1) ++cwnd;
+		if (cwnd < MAX_WINDOW - 1) ++cwnd;
 		rxmt = 0;
-                if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
+                // if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
                 int acked = hdrrecv.ack - sendbase;
                 sendbase = hdrrecv.ack;
                 for (int i = 0; i < seq - sendbase; ++i) {
