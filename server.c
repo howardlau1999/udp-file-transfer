@@ -130,7 +130,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
-            ssthresh = cwnd / 2, cwnd = cwnd > 1 ? cwnd - 1 : 1;
+            ssthresh = cwnd / 2, cwnd = cwnd > 1 ? cwnd / 2: 1;
 	    
 	    goto waitack;
         }
@@ -152,7 +152,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 		if (cwnd < MAX_WINDOW - 1) {
 		    if (ack_cnt % 20 == 0) {
                         if (cwnd >= ssthresh) {
-			    cwnd += (ack_cnt % 100 == 0);
+			    cwnd += (ack_cnt % 200 == 0);
 			} else cwnd += 1;
 		    }
 
