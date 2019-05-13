@@ -43,6 +43,7 @@ struct pkthdr {
     uint32_t ack;
     uint32_t fin;
     uint32_t win;
+    uint64_t ts;
 };
 
 struct threadarg {
@@ -67,8 +68,8 @@ uint32_t rtt_ts(struct rtt_info *);
 extern int rtt_d_flag; /* can be set nonzero for addl info */
 
 void print_hdr(int recv, struct pkthdr hdr) {
-    printf("%4s: %3s %3s %3s Seq=%d Ack=%d Win=%d\n", recv ? "Recv" : "Send", hdr.syn ? "SYN" : "", hdr.is_ack ? "ACK" : "",
-           hdr.fin ? "FIN" : "", hdr.seq, hdr.ack, hdr.win);
+    printf("%4s: %3s %3s %3s Seq=%d Ack=%d Win=%d Timestamp=%lu\n", recv ? "Recv" : "Send", hdr.syn ? "SYN" : "", hdr.is_ack ? "ACK" : "",
+           hdr.fin ? "FIN" : "", hdr.seq, hdr.ack, hdr.win, hdr.ts);
 }
 
 #endif
