@@ -98,18 +98,21 @@ int main(int argc, char *argv[]) {
     print_hdr(0, hdrsend);
     hdrsend.is_ack = 0;
     // Connected, transfer data
-
+    int LAR = hdrrecv.seq + 1;
     while (1) {
         do {
             n = recvmsg(client_fd, &msgrecv, 0);
             print_hdr(1, hdrrecv);
         } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
         if (hdrrecv.fin) break;
-        if (hdrrecv.seq == hdrsend.ack) {
+        if (hdrrecv.seq == LAR) {
+            LAR = hdrrecv.seq + 1;
             fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
-            hdrsend.ack = hdrrecv.seq + 1;
             hdrsend.seq = seq;
+        } else {
+            printf("Expected %d Actual %d\n", LAR, hdrrecv.seq);
         }
+        hdrsend.ack = LAR;
         hdrsend.is_ack = 1;
         sendmsg(client_fd, &msgsend, 0);
         print_hdr(0, hdrsend);
