@@ -52,7 +52,7 @@ int main(int argc, char *argv[]) {
     freeaddrinfo(servinfo);
 
     char inbuf[BUFFER_LEN], outbuf[BUFFER_LEN];
-    int cwnd = 1, ssthresh = 65535;
+    struct filemetadata meta;
     int seq = 0;
     struct iovec iovsend[2], iovrecv[2];
     // Try to connect
@@ -82,27 +82,35 @@ int main(int argc, char *argv[]) {
     hdrsend.syn = 1;
     hdrsend.seq = seq++;
     sendmsg(client_fd, &msgsend, 0);
-    print_hdr(0, hdrsend);
+    // print_hdr(0, hdrsend);
     hdrsend.syn = 0;
 
     int n;
     do {
         n = recvmsg(client_fd, &msgrecv, 0);
-        print_hdr(1, hdrrecv);
+        // print_hdr(1, hdrrecv);
     } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
+
+    // Unpack file metadata
+    memcpy(&meta, inbuf, sizeof(struct filemetadata));
+    printf("Filename: %s\n", meta.fn);
+    printf("Length: %lu\n", meta.filelen);
+    printf("Create Time: %lu\n", meta.ctime);
+    printf("SHA1: ");
+    print_hex(meta.sha1, SHA1_DIGEST_SIZE);
+    puts("");
 
     hdrsend.seq = seq;
     hdrsend.is_ack = 1;
     hdrsend.ack = hdrrecv.seq + 1;
     sendmsg(client_fd, &msgsend, 0);
-    print_hdr(0, hdrsend);
+    // print_hdr(0, hdrsend);
     hdrsend.is_ack = 0;
     // Connected, transfer data
     int LAR = hdrrecv.seq + 1;
     while (1) {
         do {
             n = recvmsg(client_fd, &msgrecv, 0);
-            print_hdr(1, hdrrecv);
         } while (n < sizeof(struct pkthdr) || hdrrecv.ack != seq);
 
         if (hdrrecv.seq == LAR) {
@@ -110,15 +118,18 @@ int main(int argc, char *argv[]) {
             if (hdrrecv.fin) break;
             fwrite(inbuf, 1, n - sizeof(struct pkthdr), fp);
             hdrsend.seq = seq;
+            if (LAR % 1000 == 0) {
+                printf("\r%d MB Received", LAR / 1000);
+                fflush(stdout);
+            }
         } else {
-            printf("Expected %d Actual %d\n", LAR, hdrrecv.seq);
+            // printf("Expected %d Actual %d\n", LAR, hdrrecv.seq);
         }
 
         hdrsend.ack = LAR;
         hdrsend.is_ack = 1;
         hdrsend.ts = hdrrecv.ts;
         sendmsg(client_fd, &msgsend, 0);
-        print_hdr(0, hdrsend);
         hdrsend.is_ack = 0;
     }
 
@@ -126,13 +137,48 @@ int main(int argc, char *argv[]) {
     hdrsend.ack = hdrrecv.seq + 1;
     hdrsend.seq = seq++;
     sendmsg(client_fd, &msgsend, 0);
-    print_hdr(0, hdrsend);
+    // print_hdr(0, hdrsend);
 
     hdrsend.is_ack = 0;
     hdrsend.fin = 1;
     hdrsend.seq = seq++;
     sendmsg(client_fd, &msgsend, 0);
-    print_hdr(0, hdrsend);
+    // print_hdr(0, hdrsend);
 
     fclose(fp);
+    fp = fopen(argv[3], "r");
+
+    puts("");
+
+    unsigned char buffer[BUFFER_LEN];
+    puts("Calculating SHA1...");
+    // Caculate SHA1 and length of the file
+    sha1_ctx cx[1];
+    unsigned char hval[SHA1_DIGEST_SIZE];
+
+    sha1_begin(cx);
+    while ((n = fread(buffer, 1, BUFFER_LEN, fp)) != 0) {
+        sha1_hash(buffer, n, cx);
+        filelen += n;
+    }
+    sha1_end(hval, cx);
+
+    if (filelen != meta.filelen) {
+        printf("File Length mismatched!\n");
+        exit(1);
+    }
+
+    if (memcmp(hval, meta.sha1, SHA1_DIGEST_SIZE)) {
+        printf("SHA1 mismatched!");
+        printf("Expected: ");
+        print_hex(meta.sha1, SHA1_DIGEST_SIZE);
+        puts("");
+
+        printf("Actual: ");
+        print_hex(hval, SHA1_DIGEST_SIZE);
+        puts("");
+        exit(1);
+    }
+
+    puts("Everything seems ok.");
 }

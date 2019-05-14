@@ -1,11 +1,15 @@
 all: server client
 
 %.o : %.c uftp.h
-	gcc -c $< -o $@
+	gcc -g -c $< -o $@
 
+clean:
+	rm *.o
 
 server: server.o sha1.o
-	gcc $^ -o server -lpthread -lrt
+	gcc -g $^ -o server -lpthread -lrt
 
 client: client.o sha1.o
-	gcc $^ -o client
+	gcc -g $^ -o client
+
+.PHONY: clean

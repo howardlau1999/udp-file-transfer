@@ -46,6 +46,13 @@ struct pkthdr {
     uint64_t ts;
 };
 
+struct filemetadata {
+    uint64_t ctime;
+    uint64_t filelen;
+    unsigned char sha1[SHA1_DIGEST_SIZE];
+    unsigned char fn[512];
+};
+
 struct threadarg {
     struct sockaddr client_addr;
     socklen_t addr_len;
@@ -70,6 +77,14 @@ extern int rtt_d_flag; /* can be set nonzero for addl info */
 void print_hdr(int recv, struct pkthdr hdr) {
     printf("%4s: %3s %3s %3s Seq=%d Ack=%d Win=%d Timestamp=%lu\n", recv ? "Recv" : "Send", hdr.syn ? "SYN" : "", hdr.is_ack ? "ACK" : "",
            hdr.fin ? "FIN" : "", hdr.seq, hdr.ack, hdr.win, hdr.ts);
+}
+
+static void print_hex(const char* data, size_t size)
+{
+    int i;
+    printf("0x");
+    for(i = 0; i < size; ++i)
+        printf("%x%x", ((unsigned char)data[i])/16, ((unsigned char)data[i])%16);
 }
 
 #endif

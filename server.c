@@ -5,6 +5,7 @@ int server_fd;
 unsigned int filelen;
 char *fn, *path;
 static sigjmp_buf jmpbuf;
+struct filemetadata meta;
 void *get_in_addr(struct sockaddr *sa) {
     if (sa->sa_family == AF_INET) {
         return &(((struct sockaddr_in *)sa)->sin_addr);
@@ -38,8 +39,8 @@ static void rtt_alarm(union sigval val) {
     if (cwnd >= ssthresh && cwnd < MAX_WINDOW - 1 &&
         ack_cnt - last_ack_cnt > cwnd)
         ++cwnd, last_ack_cnt = ack_cnt;
-    printf("RTT Alarm: ssthresh=%d cwnd=%d, ack_cnt=%d\n", ssthresh, cwnd,
-           ack_cnt);
+    // printf("RTT Alarm: ssthresh=%d cwnd=%d, ack_cnt=%d\n", ssthresh, cwnd,
+    //        ack_cnt);
 }
 
 static void sig_alarm(int signo) { siglongjmp(jmpbuf, 1); }
@@ -95,6 +96,8 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     hdrsend.is_ack = 1;
     hdrsend.seq = seq++;
     hdrsend.ack = ++rseq;
+    memcpy(outbuf, &meta, sizeof(struct filemetadata));
+    iovsend[1].iov_len = sizeof(struct filemetadata);
     sendmsg(server_fd, &msgsend, 0);
     print_hdr(0, hdrsend);
     hdrsend.syn = 0;
@@ -114,7 +117,6 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     while (1) {
     sendnext:
         for (; seq - sendbase < cwnd && !finished; ++seq) {
-            printf("Base: %d, Seq: %d, Cwnd: %d\n", sendbase, seq, cwnd);
             n = fread(outwnd[seq - sendbase], 1, BUFFER_LEN, fp);
             if (!n) {
                 finished = 1;
@@ -154,7 +156,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 iovsend[0].iov_base = &outhdr[i];
                 outhdr[i].ts = time_now();
                 sendmsg(server_fd, &msgsend, 0);
-                print_hdr(0, outhdr[i]);
+                // print_hdr(0, outhdr[i]);
             }
             ssthresh = cwnd * 0.8;
             if (ssthresh < 2) ssthresh = 2;
@@ -169,19 +171,17 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
+            cwnd = ssthresh;
         }
     waitack:;
         struct itimerval timer;
         struct timeval rto;
         rto.tv_sec = timeOut / 1000000;
         rto.tv_usec = timeOut % 1000000;
-        // printf("RTO: %lu\n", timeOut);
         timer.it_value = rto;
         setitimer(ITIMER_REAL, &timer, NULL);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
-            // printf("Sendbase: %d\n", sendbase);
-            // print_hdr(1, hdrrecv);
             update_timeout(hdrrecv.ts);
 
             if (hdrrecv.ack >= sendbase + 1) {
@@ -301,6 +301,11 @@ int main(int argc, char *argv[]) {
         fprintf(stderr, "server: failed to bind\n");
         exit(1);
     }
+
+    meta.ctime = metadata.st_ctim.tv_sec;
+    meta.filelen = filelen;
+    strcpy(meta.fn, fn);
+    memcpy(meta.sha1, hval, SHA1_DIGEST_SIZE);
 
     printf("Server listening on port %s\n", argv[1]);
 
