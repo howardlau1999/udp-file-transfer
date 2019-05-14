@@ -32,11 +32,11 @@ void update_timeout(uint64_t sentTime) {
     if (timeOut > maxRTT) timeOut = maxRTT;
 }
 
-int cwnd = 1, ssthresh = 32;
+int ack_cnt = 0, last_ack_cnt = 0, cwnd = 1, ssthresh = 32;
 
 static void rtt_alarm(union sigval val) {
-    if (cwnd >= ssthresh && cwnd < MAX_WINDOW - 1) ++cwnd;
-    printf("RTT Alarm: ssthresh=%d cwnd=%d\n", ssthresh, cwnd);
+    if (cwnd >= ssthresh && cwnd < MAX_WINDOW - 1 && ack_cnt - last_ack_cnt > cwnd * 10) ++cwnd, last_ack_cnt = ack_cnt;
+    printf("RTT Alarm: ssthresh=%d cwnd=%d, ack_cnt=%d\n", ssthresh, cwnd, ack_cnt);
 }
 
 static void sig_alarm(int signo) { siglongjmp(jmpbuf, 1); }
@@ -106,7 +106,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     // Connected, transfer data
     FILE *fp = fopen(path, "r");
     int finished = 0;
-    int ack_cnt = 10, LAR = 1;
+    int LAR = 1;
     int stuffed = 0;
     while (1) {
     sendnext:
@@ -137,7 +137,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 memcpy(&outhdr[seq - sendbase], &hdrsend,
                        sizeof(struct pkthdr));
                 sendmsg(server_fd, &msgsend, 0);
-                print_hdr(0, hdrsend);
+                // print_hdr(0, hdrsend);
             }
         }
 
@@ -173,26 +173,24 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         struct timeval rto;
         rto.tv_sec = timeOut / 1000000;
         rto.tv_usec = timeOut % 1000000;
-	    printf("RTO: %lu\n", timeOut);
+	    // printf("RTO: %lu\n", timeOut);
         timer.it_value = rto;
         setitimer(ITIMER_REAL, &timer, NULL);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
             // printf("Sendbase: %d\n", sendbase);
-            print_hdr(1, hdrrecv);
+            // print_hdr(1, hdrrecv);
 	        update_timeout(hdrrecv.ts);
 
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
-		        ack_cnt = 0;
+		        ++ack_cnt;
 		    if (cwnd < ssthresh) {
 		    cwnd *= 2;
-            if (cwnd > ssthresh) cwnd= ssthresh;
+            if (cwnd > ssthresh)  { cwnd= ssthresh; }
                     if (cwnd >= MAX_WINDOW) cwnd = MAX_WINDOW - 1;
                 }
 		    rxmt = 0;
-
-                // if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
                 int acked = hdrrecv.ack - sendbase;
                 sendbase = hdrrecv.ack;
                 for (int i = 0; i < seq - sendbase; ++i) {
