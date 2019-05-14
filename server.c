@@ -147,7 +147,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         }
 
         if (sigsetjmp(jmpbuf, 1) != 0) {
-            printf("Timeout\n");
+            printf("Timeout ack_cnt=%d\n", ack_cnt);
             if (++rxmt > 3) goto finish;
         clearstuff:;
             for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
