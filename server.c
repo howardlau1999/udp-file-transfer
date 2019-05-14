@@ -138,6 +138,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                        sizeof(struct pkthdr));
                 sendmsg(server_fd, &msgsend, 0);
                 // print_hdr(0, hdrsend);
+                usleep(1000);
             }
         }
 
@@ -152,6 +153,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
 		        outhdr[i].ts = time_now();
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
+                usleep(1000);
             }
             ssthresh = cwnd * 0.8;
             if (ssthresh < 2) ssthresh = 2;
