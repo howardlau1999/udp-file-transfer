@@ -1,6 +1,6 @@
 all: server client
 
-%.o : %.c
+%.o : %.c uftp.h
 	gcc -c $< -o $@
 
 

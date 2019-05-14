@@ -19,8 +19,8 @@ uint64_t time_now() {
     return current.tv_sec * 1000000 + current.tv_usec;
 }
 
-int64_t timeOut, estimatedRTT = 250000, deviation = 1, difference = 0,
-                 minRTT = 250000, maxRTT = 6000000;
+int64_t timeOut, estimatedRTT = 500000, deviation = 1, difference = 0,
+                 minRTT = 200000, maxRTT = 6000000;
 void update_timeout(uint64_t sentTime) {
     uint64_t sampleRTT = time_now() - sentTime;
     estimatedRTT = 0.875 * estimatedRTT + 0.125 * sampleRTT;  // alpha = 0.875
@@ -32,7 +32,7 @@ void update_timeout(uint64_t sentTime) {
     if (timeOut > maxRTT) timeOut = maxRTT;
 }
 
-int cwnd = 1, ssthresh = 1024;
+int cwnd = 1, ssthresh = 32;
 
 static void rtt_alarm(union sigval val) {
     if (cwnd >= ssthresh && cwnd < MAX_WINDOW - 1) ++cwnd;
@@ -56,7 +56,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     spec.it_interval.tv_nsec = estimatedRTT * 1000;
     timer_settime(timerid, 0, &spec, NULL);
 
-    cwnd = 1, ssthresh = 1024;
+    cwnd = 1, ssthresh = 64;
     char inbuf[BUFFER_LEN], outbuf[BUFFER_LEN];
     char outwnd[MAX_WINDOW + 1][BUFFER_LEN];
     int outlen[MAX_WINDOW + 1];
@@ -106,7 +106,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     // Connected, transfer data
     FILE *fp = fopen(path, "r");
     int finished = 0;
-    int ack_cnt = 10;
+    int ack_cnt = 10, LAR = 1;
     int stuffed = 0;
     while (1) {
     sendnext:
@@ -142,43 +142,55 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         }
 
         if (sigsetjmp(jmpbuf, 1) != 0) {
-	    printf("Timeout\n");
-	    if (++rxmt > 3) goto finish; 
+	        printf("Timeout\n");
+	        if (++rxmt > 3) goto finish; 
 	    clearstuff:;    
             for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
                 iovsend[0].iov_base = &outhdr[i];
-		outhdr[i].ts = time_now();
+		        outhdr[i].ts = time_now();
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
-            ssthresh = cwnd / 2;
+            ssthresh = cwnd * 0.8;
             if (ssthresh < 2) ssthresh = 2;
-	    cwnd = 1; 
-	    goto waitack;
+	        cwnd = 1; 
+	        goto waitack;
+        fastrxmt:;
+            
+            for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
+                iovsend[1].iov_len = outlen[i];
+                iovsend[1].iov_base = outwnd[i];
+                iovsend[0].iov_base = &outhdr[i];
+		        outhdr[i].ts = time_now();
+                sendmsg(server_fd, &msgsend, 0);
+                print_hdr(0, outhdr[i]);
+            }
         }
     waitack:;
         struct itimerval timer;
         struct timeval rto;
         rto.tv_sec = timeOut / 1000000;
         rto.tv_usec = timeOut % 1000000;
-	printf("RTO: %lu\n", timeOut);
+	    printf("RTO: %lu\n", timeOut);
         timer.it_value = rto;
         setitimer(ITIMER_REAL, &timer, NULL);
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
             // printf("Sendbase: %d\n", sendbase);
             print_hdr(1, hdrrecv);
-	    update_timeout(hdrrecv.ts);
+	        update_timeout(hdrrecv.ts);
+
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
-		ack_cnt++;
-		if (cwnd < ssthresh) {
+		        ack_cnt = 0;
+		    if (cwnd < ssthresh) {
 		    cwnd *= 2;
+            if (cwnd > ssthresh) cwnd= ssthresh;
                     if (cwnd >= MAX_WINDOW) cwnd = MAX_WINDOW - 1;
                 }
-		rxmt = 0;
+		    rxmt = 0;
 
                 // if (--ack_cnt == 0) ack_cnt = cwnd * 10, ++cwnd;
                 int acked = hdrrecv.ack - sendbase;
