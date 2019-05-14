@@ -35,7 +35,8 @@ void update_timeout(uint64_t sentTime) {
 int cwnd = 1, ssthresh = 1024;
 
 static void rtt_alarm(union sigval val) {
-    if (cwnd > ssthresh && cwnd < MAX_WINDOW - 1) ++cwnd;
+    if (cwnd >= ssthresh && cwnd < MAX_WINDOW - 1) ++cwnd;
+    printf("RTT Alarm: ssthresh=%d cwnd=%d\n", ssthresh, cwnd);
 }
 
 static void sig_alarm(int signo) { siglongjmp(jmpbuf, 1); }
@@ -106,7 +107,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     FILE *fp = fopen(path, "r");
     int finished = 0;
     int ack_cnt = 10;
-    
+    int stuffed = 0;
     while (1) {
     sendnext:
         for (; seq - sendbase < cwnd && !finished; ++seq) {
@@ -118,6 +119,8 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 hdrsend.seq = seq;
                 hdrsend.ack = rseq;
                 hdrsend.ts = time_now();
+                iovsend[1].iov_len = 0;
+                iovsend[0].iov_base = &hdrsend;
                 outlen[seq - sendbase] = 0;
                 memcpy(&outhdr[seq - sendbase], &hdrsend,
                        sizeof(struct pkthdr));
@@ -130,18 +133,19 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 hdrsend.ack = rseq;
                 hdrsend.ts = time_now();
                 outhdr[seq - sendbase] = hdrsend;
+                iovsend[0].iov_base = &hdrsend;
                 memcpy(&outhdr[seq - sendbase], &hdrsend,
                        sizeof(struct pkthdr));
                 sendmsg(server_fd, &msgsend, 0);
-                print_hdr(0, outhdr[seq - sendbase]);
+                print_hdr(0, hdrsend);
             }
         }
 
         if (sigsetjmp(jmpbuf, 1) != 0) {
 	    printf("Timeout\n");
 	    if (++rxmt > 3) goto finish; 
-	        
-            for (int i = 0; i < seq - sendbase; ++i) {
+	    clearstuff:;    
+            for (int i = 0; i < seq - sendbase && i < cwnd; ++i) {
                 iovsend[1].iov_len = outlen[i];
                 iovsend[1].iov_base = outwnd[i];
                 iovsend[0].iov_base = &outhdr[i];
@@ -150,6 +154,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 print_hdr(0, outhdr[i]);
             }
             ssthresh = cwnd / 2;
+            if (ssthresh < 2) ssthresh = 2;
 	    cwnd = 1; 
 	    goto waitack;
         }
@@ -197,6 +202,7 @@ finish:
 
     fclose(fp);
     alarm(0);
+    timer_delete(timerid);
     printf("File transfer finished.\n");
 }
 
