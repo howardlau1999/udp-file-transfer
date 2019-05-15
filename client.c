@@ -108,6 +108,8 @@ int main(int argc, char *argv[]) {
     hdrsend.is_ack = 0;
     // Connected, transfer data
     int LAR = hdrrecv.seq + 1;
+    struct timeval tik, tok;
+    gettimeofday(&tik, NULL);
     while (1) {
         do {
             n = recvmsg(client_fd, &msgrecv, 0);
@@ -146,6 +148,14 @@ int main(int argc, char *argv[]) {
     // print_hdr(0, hdrsend);
 
     fclose(fp);
+    gettimeofday(&tok, NULL);
+    uint64_t elapsed = (tok.tv_usec + tok.tv_sec * 1000000) -
+                       (tik.tv_usec + tik.tv_sec * 1000000);
+    printf(
+        "\rBytes received: %ld  Speed: %.2lf bytes/sec (%.2lf Mbps) "
+        "Elapsed: %.2lf seconds",
+        meta.filelen, (double)meta.filelen / elapsed * 1000000,
+        (double)meta.filelen / elapsed * 8, (double)elapsed / 1000000);
     fp = fopen(argv[3], "r");
 
     puts("");
