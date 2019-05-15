@@ -112,7 +112,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
     // Connected, transfer data
     FILE *fp = fopen(path, "r");
     int finished = 0;
-    int LAR = 1;
+    int LAR = 1, repeated_ack = 0;
     int stuffed = 0;
     while (1) {
     sendnext:
@@ -171,7 +171,7 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
                 sendmsg(server_fd, &msgsend, 0);
                 print_hdr(0, outhdr[i]);
             }
-            cwnd = ssthresh;
+            cwnd = ssthresh = cwnd / 2;
         }
     waitack:;
         struct itimerval timer;
@@ -183,7 +183,13 @@ void worker(int syn, struct sockaddr client_addr, socklen_t addr_len) {
         do {
             n = recvmsg(server_fd, &msgrecv, 0);
             update_timeout(hdrrecv.ts);
+            if (LAR == hdrrecv.ack) {
+                if (++repeated_ack == 3) {
+                    goto fastrxmt;
+                }
+            }
 
+            LAR = hdrrecv.ack;
             if (hdrrecv.ack >= sendbase + 1) {
                 alarm(0);
                 ++ack_cnt;
